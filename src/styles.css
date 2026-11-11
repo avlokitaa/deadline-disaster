@@ -286,26 +286,90 @@ body {
   animation: pulseTag 0.6s infinite alternate;
 }
 
+.room-timer-tag {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  background: #000;
+  border: 2px solid var(--pixel-yellow);
+  color: var(--pixel-yellow);
+  font-family: var(--font-pixel-heading);
+  font-size: 0.65rem;
+  padding: 6px 12px;
+  box-shadow: 3px 3px 0px #000;
+  z-index: 8;
+}
+
 @keyframes pulseTag {
   from { transform: scale(0.95); }
   to { transform: scale(1.05); }
 }
 
+/* Safe Coaster Area & Two-Step SAFE Button */
 .pixel-coaster-zone {
   position: absolute;
-  right: 130px;
-  top: 180px;
-  width: 90px;
-  height: 90px;
+  right: 120px;
+  top: 175px;
+  width: 100px;
+  height: 100px;
   border: 3px dashed var(--pixel-green);
   background: rgba(80, 250, 123, 0.1);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: var(--pixel-green);
-  font-family: var(--font-pixel-heading);
-  font-size: 0.6rem;
+  gap: 6px;
   box-shadow: inset 0 0 10px rgba(80, 250, 123, 0.3);
+  transition: all 0.2s ease;
+  z-index: 6;
+}
+
+.pixel-coaster-zone.coaster-active {
+  border-color: var(--pixel-yellow);
+  background: rgba(241, 250, 140, 0.25);
+  box-shadow: inset 0 0 18px rgba(241, 250, 140, 0.6);
+}
+
+.coaster-label {
+  font-family: var(--font-pixel-heading);
+  font-size: 0.5rem;
+  color: var(--pixel-green);
+}
+
+.coaster-safe-btn {
+  background: #281a3e;
+  color: #776a91;
+  border: 2px solid #483863;
+  padding: 5px 10px;
+  font-family: var(--font-pixel-heading);
+  font-size: 0.65rem;
+  cursor: not-allowed;
+  box-shadow: 2px 2px 0px #000;
+  transition: all 0.15s ease;
+  pointer-events: auto;
+}
+
+.coaster-safe-btn.btn-active {
+  background: var(--pixel-green);
+  color: #000;
+  border: 2px solid #000;
+  cursor: pointer;
+  animation: pulseBtn 0.4s infinite alternate;
+}
+
+.coaster-safe-btn.btn-active:hover {
+  background: var(--pixel-yellow);
+  transform: scale(1.08);
+}
+
+.coaster-safe-btn.btn-active:active {
+  transform: translate(2px, 2px);
+  box-shadow: 0px 0px 0px #000;
+}
+
+@keyframes pulseBtn {
+  from { transform: scale(0.96); }
+  to { transform: scale(1.06); }
 }
 
 .pixel-spill-puddle {
@@ -325,7 +389,7 @@ body {
   cursor: grab;
   transform: translate(-50%, -50%);
   filter: drop-shadow(3px 5px 0px rgba(0,0,0,0.6));
-  z-index: 5;
+  z-index: 8;
 }
 
 .pixel-coffee-mug-container:active {
@@ -340,7 +404,7 @@ body {
 }
 
 /* ===================================================
-   RETRO MONITOR FRAME & DISPLAY (STAGES 2 & 3)
+   RETRO MONITOR FRAME & BOUNDED DISPLAY (STAGES 2 & 3)
    =================================================== */
 .pixel-monitor-wrapper {
   position: relative;
@@ -369,6 +433,32 @@ body {
   border-radius: 4px;
 }
 
+/* Dynamic Desktop Disaster Warning Banner */
+.desktop-warning-banner {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #000;
+  color: var(--pixel-yellow);
+  border: 2px solid var(--pixel-orange);
+  padding: 4px 10px;
+  font-family: var(--font-pixel-heading);
+  font-size: 0.5rem;
+  z-index: 30;
+  box-shadow: 2px 2px 0px #000;
+  text-align: center;
+  width: 90%;
+  white-space: nowrap;
+}
+
+.desktop-warning-banner.critical {
+  background: var(--pixel-red);
+  color: #fff;
+  border-color: #000;
+  animation: pulseTag 0.5s infinite alternate;
+}
+
 .inbox-card-pixel {
   position: absolute;
   background: var(--bg-panel);
@@ -381,6 +471,7 @@ body {
 }
 .inbox-card-pixel.spam { border-color: var(--pixel-purple); }
 
+/* Draggable Desktop Popup Window */
 .popup-window-pixel {
   position: absolute;
   background: var(--bg-panel);
@@ -388,6 +479,8 @@ body {
   box-shadow: 4px 4px 0px #000;
   width: 210px;
   z-index: 10;
+  cursor: move;
+  touch-action: none;
 }
 
 .popup-header-pixel {
@@ -399,6 +492,11 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  cursor: grab;
+}
+
+.popup-header-pixel:active {
+  cursor: grabbing;
 }
 
 .popup-close-btn-pixel {
@@ -423,7 +521,7 @@ body {
 }
 
 /* ===================================================
-   STAGE 4: SURVIVE THE MEETING (PIXEL-ART MEETING ROOM)
+   STAGE 4: SURVIVE THE MEETING
    =================================================== */
 .pixel-meeting-room {
   position: relative;
@@ -434,7 +532,6 @@ body {
   outline: none;
 }
 
-/* Room Wall Pattern & Windows */
 .meeting-wall {
   position: absolute;
   top: 0;
@@ -505,7 +602,6 @@ body {
   box-shadow: 2px 2px 0px #000;
 }
 
-/* Floor & Furniture */
 .meeting-floor {
   position: absolute;
   top: 140px;
@@ -518,7 +614,6 @@ body {
   background-size: 32px 32px;
 }
 
-/* Large Office Conference Table */
 .pixel-conference-table {
   position: absolute;
   top: 52%;
@@ -543,7 +638,6 @@ body {
   opacity: 0.85;
 }
 
-/* Player Woman & Mob Characters */
 .woman-character-pixel {
   position: absolute;
   width: 52px;
@@ -590,7 +684,6 @@ body {
   white-space: nowrap;
 }
 
-/* Dynamic Gossip Speech Hazards */
 .gossip-bubble-pixel {
   position: absolute;
   background: var(--pixel-pink);

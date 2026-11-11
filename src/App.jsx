@@ -9,7 +9,11 @@ import screenImg from './assets/screen.png';
 import womanImg from './assets/woman.png';
 import mobImg from './assets/mob.png';
 
-const INITIAL_STATS = { stress: 20, productivity: 20, sanity: 100, score: 0 };
+// Gameplay Constants & Fixed Starting Positions
+const INITIAL_STATS = { stress: 0, productivity: 100, sanity: 100, score: 0 };
+const FIXED_START_MUG_POS = { x: 150, y: 340 };
+const INITIAL_WOMAN_POS = { x: 180, y: 280 };
+
 const PHASES = [
   { id: 1, name: 'COFFEE CRISIS', endAt: 45 },
   { id: 2, name: 'INBOX APOCALYPSE', endAt: 30 },
@@ -35,37 +39,136 @@ export default function App() {
   // Game Viewport Ref
   const gameAreaRef = useRef(null);
   
-  // Stage 1 State
-  const [mugPos, setMugPos] = useState({ x: 450, y: 220 });
+  // Stage 1 State: Coffee Mug Drag State, Laptop Danger Timer (3s), Room Timer (5s), and Safe Coaster State
+  const [mugPos, setMugPos] = useState(FIXED_START_MUG_POS);
+  const isDraggingMug = useRef(false);
+  const dragOffset = useRef({ x: 0, y: 0 });
+
   const [spillPos, setSpillPos] = useState({ x: 400, y: 220, radius: 0 });
-  const [coffeeTimer, setCoffeeTimer] = useState(null);
+  const [coffeeTimer, setCoffeeTimer] = useState(null); // 3-second laptop danger timer
+  const [roomTimer, setRoomTimer] = useState(5);       // 5-second general room timer
+  const [isOnCoaster, setIsOnCoaster] = useState(false);
+
+  // Guard ref to prevent duplicate rewards within a single round
+  const coffeeRoundRewarded = useRef(false);
 
   // Stage 2 & 3 State
   const [emails, setEmails] = useState([]);
   const [popups, setPopups] = useState([]);
+  const activeDragRef = useRef(null);
+  const prevIrrelevantCountRef = useRef(0);
 
-  // Stage 4 State: Player Woman, Enemy Mob, and Gossip Hazards
-  const [womanPos, setWomanPos] = useState({ x: 180, y: 280 });
-  const [mobPos, setMobPos] = useState({ x: 620, y: 280 });
-  const [mobVel, setMobVel] = useState({ dx: 3.5, dy: 2.5 });
+  // Stage 4 State: Player Woman, Enemy Mob, Freeze state, and Gossip Hazards
+  const [womanPos, setWomanPos] = useState(INITIAL_WOMAN_POS);
+  const [mobPos, setMobPos] = useState({ x: 650, y: 280 });
+  const [isFrozen, setIsFrozen] = useState(false);
+  const isFrozenRef = useRef(false);
   const [gossips, setGossips] = useState([]);
 
-  // Active Key Tracker for Smooth Multidirectional Movement
+  // Keyboard Movement Input Tracker
   const keysPressed = useRef({});
 
   // Active Phase calculation
   const currentPhase = PHASES.find(p => timeLeft > p.endAt) || PHASES[3];
 
+  // Independent Stats Updater
   const updateStats = (delta) => {
     setStats(prev => ({
       stress: Math.max(0, Math.min(100, prev.stress + (delta.stress || 0))),
       productivity: Math.max(0, Math.min(100, prev.productivity + (delta.productivity || 0))),
       sanity: Math.max(0, Math.min(100, prev.sanity + (delta.sanity || 0))),
-      score: prev.score + (delta.score || 0)
+      score: Math.max(0, prev.score + (delta.score || 0))
     }));
   };
 
-  // Main 60s Workday Timer
+  // Resets coffee round state and prepares for next interaction
+  const resetCoffeeRound = () => {
+    isDraggingMug.current = false;
+    setCoffeeTimer(null);
+    setRoomTimer(5);
+    setIsOnCoaster(false);
+    setMugPos(FIXED_START_MUG_POS); // Returns to fixed starting position
+    setTimeout(() => {
+      coffeeRoundRewarded.current = false;
+    }, 100);
+  };
+
+  // Explicit Step 2: Triggered ONLY when player clicks the active [ SAFE ] button
+  const handleSafeButtonClick = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (isOnCoaster && !coffeeRoundRewarded.current) {
+      coffeeRoundRewarded.current = true;
+      updateStats({ score: 100 }); // Award +100 points exactly once upon clicking SAFE
+      resetCoffeeRound();
+    }
+  };
+
+  // Triggers coffee spill event (+1 percentage point Stress)
+  const triggerCoffeeSpill = (x, y) => {
+    updateStats({ stress: 1 });
+    setSpillPos({ x, y, radius: 45 });
+    resetCoffeeRound();
+  };
+
+  // Stage 1 Drag Interaction: Pointer Down directly on Mug
+  const handleMugPointerDown = (e) => {
+    if (gameState !== 'PLAYING' || currentPhase.id !== 1) return;
+    e.stopPropagation();
+    e.preventDefault();
+
+    isDraggingMug.current = true;
+
+    if (gameAreaRef.current) {
+      const rect = gameAreaRef.current.getBoundingClientRect();
+      const pointerX = e.clientX - rect.left;
+      const pointerY = e.clientY - rect.top;
+
+      // Retain precise offset so mug doesn't snap center to pointer
+      dragOffset.current = {
+        x: pointerX - mugPos.x,
+        y: pointerY - mugPos.y
+      };
+    }
+  };
+
+  // Window Pointer Listeners for Smooth Dragging & Mouse Release
+  useEffect(() => {
+    const handleWindowPointerMove = (e) => {
+      if (!isDraggingMug.current || !gameAreaRef.current) return;
+
+      const rect = gameAreaRef.current.getBoundingClientRect();
+      const pointerX = e.clientX - rect.left;
+      const pointerY = e.clientY - rect.top;
+
+      const newX = pointerX - dragOffset.current.x;
+      const newY = pointerY - dragOffset.current.y;
+
+      // Clamp inside game viewport
+      const clampedX = Math.max(30, Math.min(rect.width - 30, newX));
+      const clampedY = Math.max(30, Math.min(rect.height - 30, newY));
+
+      setMugPos({ x: clampedX, y: clampedY });
+    };
+
+    const handleWindowPointerUp = () => {
+      if (isDraggingMug.current) {
+        isDraggingMug.current = false;
+      }
+    };
+
+    window.addEventListener('pointermove', handleWindowPointerMove);
+    window.addEventListener('pointerup', handleWindowPointerUp);
+    window.addEventListener('pointercancel', handleWindowPointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handleWindowPointerMove);
+      window.removeEventListener('pointerup', handleWindowPointerUp);
+      window.removeEventListener('pointercancel', handleWindowPointerUp);
+    };
+  }, []);
+
+  // Main 60s Workday Timer & Passive Stat Degradation
   useEffect(() => {
     if (gameState !== 'PLAYING') return;
     const timer = setInterval(() => {
@@ -76,11 +179,18 @@ export default function App() {
         }
         return prev - 1;
       });
+
+      updateStats({
+        sanity: -0.5,
+        productivity: -0.5,
+        stress: 0.5
+      });
     }, 1000);
+
     return () => clearInterval(timer);
   }, [gameState]);
 
-  // Stage 1: Coffee Danger Zone & 5s Timer
+  // Stage 1: Coaster & Laptop Danger Zone Detection
   useEffect(() => {
     if (gameState !== 'PLAYING' || currentPhase.id !== 1) {
       if (coffeeTimer !== null) setCoffeeTimer(null);
@@ -93,21 +203,37 @@ export default function App() {
       const laptopY = 225;
       const distToLaptop = Math.hypot(mugPos.x - laptopX, mugPos.y - laptopY);
 
-      if (distToLaptop < 150) {
-        if (coffeeTimer === null) setCoffeeTimer(5);
+      const coasterX = rect.width - 170;
+      const coasterY = 225;
+      const distToCoaster = Math.hypot(mugPos.x - coasterX, mugPos.y - coasterY);
+
+      // Check if mug is placed on coaster
+      if (distToCoaster < 55) {
+        if (!isOnCoaster) setIsOnCoaster(true);
+        if (coffeeTimer !== null) setCoffeeTimer(null); // Clear danger timer while on coaster
       } else {
-        if (coffeeTimer !== null) setCoffeeTimer(null);
+        if (isOnCoaster) setIsOnCoaster(false);
+        
+        // Check Laptop Danger Zone (3-second timer)
+        if (distToLaptop < 150) {
+          if (coffeeTimer === null) {
+            setCoffeeTimer(3);
+          }
+        } else {
+          if (coffeeTimer !== null) {
+            setCoffeeTimer(null);
+          }
+        }
       }
     }
-  }, [gameState, currentPhase, mugPos, coffeeTimer]);
+  }, [gameState, currentPhase, mugPos, coffeeTimer, isOnCoaster]);
 
+  // Stage 1: 3-Second Laptop Danger Countdown Ticker
   useEffect(() => {
     if (coffeeTimer === null || gameState !== 'PLAYING' || currentPhase.id !== 1) return;
 
     if (coffeeTimer === 0) {
-      updateStats({ stress: 15, sanity: -10 });
-      setSpillPos({ x: mugPos.x, y: mugPos.y, radius: 45 });
-      setCoffeeTimer(null);
+      triggerCoffeeSpill(mugPos.x, mugPos.y);
       return;
     }
 
@@ -118,7 +244,24 @@ export default function App() {
     return () => clearInterval(countdown);
   }, [coffeeTimer, gameState, currentPhase, mugPos]);
 
-  // Stages 2 & 3 Spawners
+  // Stage 1: 5-Second General Room Timer Ticker (Pauses when coffee is on safe coaster)
+  useEffect(() => {
+    if (gameState !== 'PLAYING' || currentPhase.id !== 1 || isOnCoaster) return;
+
+    const interval = setInterval(() => {
+      setRoomTimer(prev => {
+        if (prev <= 1) {
+          triggerCoffeeSpill(mugPos.x, mugPos.y);
+          return 5;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [gameState, currentPhase, isOnCoaster, mugPos]);
+
+  // Stage 2 & 3: Email & Popup Spawners
   useEffect(() => {
     if (gameState !== 'PLAYING') return;
 
@@ -133,7 +276,7 @@ export default function App() {
           }]);
         }
       } else if (currentPhase.id === 3) {
-        if (Math.random() > 0.94 && popups.length < 4) {
+        if (Math.random() > 0.94 && popups.length < 7) {
           setPopups(prev => [...prev, {
             id: Date.now(),
             x: 20 + Math.random() * 430,
@@ -146,6 +289,48 @@ export default function App() {
 
     return () => clearInterval(gameTick);
   }, [gameState, currentPhase, emails.length, popups.length]);
+
+  // Stage 3 Penalty Event: Check whenever irrelevant pop-ups exceed 5
+  const irrelevantPopupsCount = popups.filter(p => !p.isPresentation).length;
+  useEffect(() => {
+    if (currentPhase.id === 3 && gameState === 'PLAYING') {
+      if (irrelevantPopupsCount > 5 && prevIrrelevantCountRef.current <= 5) {
+        updateStats({ score: -5 });
+      }
+      prevIrrelevantCountRef.current = irrelevantPopupsCount;
+    }
+  }, [irrelevantPopupsCount, currentPhase, gameState]);
+
+  // Stage 3 Draggable Popups Pointer Logic
+  const handlePopupPointerDown = (id, e) => {
+    e.stopPropagation();
+    const popupEl = e.currentTarget.closest('.popup-window-pixel');
+    if (!popupEl) return;
+    const rect = popupEl.getBoundingClientRect();
+    activeDragRef.current = {
+      id,
+      offsetX: e.clientX - rect.left,
+      offsetY: e.clientY - rect.top
+    };
+  };
+
+  const handleMonitorDisplayPointerMove = (e) => {
+    if (!activeDragRef.current) return;
+    const displayEl = e.currentTarget;
+    const displayRect = displayEl.getBoundingClientRect();
+    
+    let newX = e.clientX - displayRect.left - activeDragRef.current.offsetX;
+    let newY = e.clientY - displayRect.top - activeDragRef.current.offsetY;
+
+    newX = Math.max(0, Math.min(470, newX));
+    newY = Math.max(0, Math.min(250, newY));
+
+    setPopups(prev => prev.map(p => p.id === activeDragRef.current.id ? { ...p, x: newX, y: newY } : p));
+  };
+
+  const handleMonitorDisplayPointerUp = () => {
+    activeDragRef.current = null;
+  };
 
   // Stage 4 Keyboard Listener (WASD & Arrow Keys)
   useEffect(() => {
@@ -168,71 +353,76 @@ export default function App() {
     };
   }, []);
 
-  // Stage 4: Game Loop (Player WASD Movement, Mob Patrol, Gossip Spawner & Collision Checks)
+  // Stage 4 Loop: Player Movement, Mob Chasing AI, Gossip Spawner & Collision Handling
   useEffect(() => {
     if (gameState !== 'PLAYING' || currentPhase.id !== 4) return;
 
     const moveSpeed = 5;
 
     const frameLoop = setInterval(() => {
-      // 1. Update Player (Woman) Position via WASD / Arrows
-      setWomanPos(prev => {
-        let newX = prev.x;
-        let newY = prev.y;
+      if (!isFrozenRef.current) {
+        setWomanPos(prev => {
+          let newX = prev.x;
+          let newY = prev.y;
 
-        if (keysPressed.current['w'] || keysPressed.current['arrowup']) newY -= moveSpeed;
-        if (keysPressed.current['s'] || keysPressed.current['arrowdown']) newY += moveSpeed;
-        if (keysPressed.current['a'] || keysPressed.current['arrowleft']) newX -= moveSpeed;
-        if (keysPressed.current['d'] || keysPressed.current['arrowright']) newX += moveSpeed;
+          if (keysPressed.current['w'] || keysPressed.current['arrowup']) newY -= moveSpeed;
+          if (keysPressed.current['s'] || keysPressed.current['arrowdown']) newY += moveSpeed;
+          if (keysPressed.current['a'] || keysPressed.current['arrowleft']) newX -= moveSpeed;
+          if (keysPressed.current['d'] || keysPressed.current['arrowright']) newX += moveSpeed;
 
-        // Boundary Clamping (Keep inside meeting room)
-        const clampedX = Math.max(40, Math.min(840, newX));
-        const clampedY = Math.max(160, Math.min(420, newY));
+          const clampedX = Math.max(40, Math.min(840, newX));
+          const clampedY = Math.max(160, Math.min(420, newY));
 
-        return { x: clampedX, y: clampedY };
-      });
+          return { x: clampedX, y: clampedY };
+        });
+      }
 
-      // 2. Autonomous Mob Movement & Bounce AI
       setMobPos(prev => {
-        let newX = prev.x + mobVel.dx;
-        let newY = prev.y + mobVel.dy;
+        const dx = womanPos.x - prev.x;
+        const dy = womanPos.y - prev.y;
+        const dist = Math.hypot(dx, dy);
 
-        let nextDx = mobVel.dx;
-        let nextDy = mobVel.dy;
+        if (dist < 2) return prev;
 
-        if (newX <= 50 || newX >= 820) nextDx = -nextDx;
-        if (newY <= 160 || newY >= 420) nextDy = -nextDy;
+        const mobSpeed = 2.4;
+        const moveX = (dx / dist) * mobSpeed;
+        const moveY = (dy / dist) * mobSpeed;
 
-        if (nextDx !== mobVel.dx || nextDy !== mobVel.dy) {
-          setMobVel({ dx: nextDx, dy: nextDy });
-        }
-
-        return { x: Math.max(50, Math.min(820, newX)), y: Math.max(160, Math.min(420, newY)) };
+        return {
+          x: Math.max(40, Math.min(840, prev.x + moveX)),
+          y: Math.max(160, Math.min(420, prev.y + moveY))
+        };
       });
 
-      // 3. Spawn Random Gossip Bubbles
-      if (Math.random() > 0.94 && gossips.length < 4) {
+      if (Math.random() > 0.94 && gossips.length < 5) {
         setGossips(prev => [...prev, {
           id: Date.now(),
           text: GOSSIP_TEXTS[Math.floor(Math.random() * GOSSIP_TEXTS.length)],
-          x: 100 + Math.random() * 680,
-          y: 170 + Math.random() * 220
+          x: 60 + Math.random() * 740,
+          y: 170 + Math.random() * 230
         }]);
       }
 
-      // 4. Collision Detection: Woman vs Mob
       const distToMob = Math.hypot(womanPos.x - mobPos.x, womanPos.y - mobPos.y);
-      if (distToMob < 45) {
-        updateStats({ stress: 1.2, sanity: -0.8 });
+      if (distToMob < 40 && !isFrozenRef.current) {
+        isFrozenRef.current = true;
+        setIsFrozen(true);
+
+        updateStats({ score: -5 });
+        setWomanPos(INITIAL_WOMAN_POS);
+
+        setTimeout(() => {
+          isFrozenRef.current = false;
+          setIsFrozen(false);
+        }, 500);
       }
 
-      // 5. Collision Detection: Woman vs Gossip Bubbles
       setGossips(prev => {
         return prev.filter(g => {
           const distToGossip = Math.hypot(womanPos.x - g.x, womanPos.y - g.y);
-          if (distToGossip < 40) {
-            updateStats({ stress: 4, sanity: -3 });
-            return false; // Remove bubble on touch
+          if (distToGossip < 35 && !isFrozenRef.current) {
+            updateStats({ stress: 5, sanity: -5 });
+            return false;
           }
           return true;
         });
@@ -241,28 +431,7 @@ export default function App() {
     }, 30);
 
     return () => clearInterval(frameLoop);
-  }, [gameState, currentPhase, womanPos, mobPos, mobVel, gossips]);
-
-  // Pointer Movement for Stage 1 Coffee Mug
-  const handlePointerMove = (e) => {
-    if (gameState !== 'PLAYING' || !gameAreaRef.current) return;
-    const rect = gameAreaRef.current.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    if (currentPhase.id === 1) {
-      setMugPos({ x, y });
-      
-      const coasterX = rect.width - 175;
-      const coasterY = 225;
-      const distToCoaster = Math.hypot(x - coasterX, y - coasterY);
-
-      if (distToCoaster < 50) {
-        updateStats({ score: 50, productivity: 8, stress: -5 });
-        setSpillPos({ x: coasterX, y: coasterY, radius: 15 });
-      }
-    }
-  };
+  }, [gameState, currentPhase, womanPos, mobPos, gossips]);
 
   const handleEmailClick = (id, urgent) => {
     updateStats(urgent ? { productivity: 5, score: 30 } : { sanity: -5, stress: 5 });
@@ -278,12 +447,20 @@ export default function App() {
   const startGame = () => {
     setStats(INITIAL_STATS);
     setTimeLeft(60);
-    setMugPos({ x: 450, y: 220 });
+    setMugPos(FIXED_START_MUG_POS);
+    isDraggingMug.current = false;
     setCoffeeTimer(null);
+    setRoomTimer(5);
+    setIsOnCoaster(false);
+    coffeeRoundRewarded.current = false;
     setEmails([]);
     setPopups([]);
-    setWomanPos({ x: 180, y: 280 });
-    setMobPos({ x: 620, y: 280 });
+    activeDragRef.current = null;
+    prevIrrelevantCountRef.current = 0;
+    setWomanPos(INITIAL_WOMAN_POS);
+    setMobPos({ x: 650, y: 280 });
+    setIsFrozen(false);
+    isFrozenRef.current = false;
     setGossips([]);
     setGameState('PLAYING');
   };
@@ -299,7 +476,7 @@ export default function App() {
           </div>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', lineHeight: '1.6' }}>
             SURVIVE 60 SECONDS OF OFFICE CHAOS!<br/>
-            USE WASD / ARROW KEYS TO SURVIVE THE MEETING.
+            HOLD & DRAG COFFEE TO COASTER & CLICK SAFE TO EARN +100 PTS!
           </p>
 
           <button className="pixel-play-btn" onClick={startGame}>▶ PLAY GAME</button>
@@ -358,12 +535,17 @@ export default function App() {
 
       {/* PLAYING VIEWPORT */}
       {gameState === 'PLAYING' && (
-        <div className="game-viewport" ref={gameAreaRef} onPointerMove={handlePointerMove}>
+        <div className="game-viewport" ref={gameAreaRef}>
           
           {/* STAGE 1: COFFEE CRISIS */}
           {currentPhase.id === 1 && (
             <div className="pixel-workspace">
               <div className="pixel-workspace-wallpaper" />
+
+              {/* General 5-Second Room Timer Tag */}
+              <div className="room-timer-tag">
+                {isOnCoaster ? '☕ COASTER: READY' : `⏱️ ROOM TIMER: ${roomTimer}s`}
+              </div>
 
               <div className="pixel-desk-container">
                 <img src={deskImg} alt="Pixel Desk" className="pixel-desk-img" />
@@ -373,13 +555,24 @@ export default function App() {
                 <img src={laptopImg} alt="Pixel Laptop" className="pixel-laptop-img" />
               </div>
 
+              {/* Laptop Danger Zone (3-Second Timer) */}
               <div className={`spill-danger-zone ${coffeeTimer !== null ? 'active-warning' : ''}`}>
                 <span className="spill-warning-tag">
                   {coffeeTimer !== null ? `⚠️ MOVE COFFEE! SPILL IN: ${coffeeTimer}s` : '⚠️ LAPTOP DANGER ZONE'}
                 </span>
               </div>
 
-              <div className="pixel-coaster-zone">SAFE</div>
+              {/* Step 1 & 2: Safe Coaster Zone & Clickable [ SAFE ] Button */}
+              <div className={`pixel-coaster-zone ${isOnCoaster ? 'coaster-active' : ''}`}>
+                <span className="coaster-label">COASTER</span>
+                <button 
+                  className={`coaster-safe-btn ${isOnCoaster ? 'btn-active' : ''}`}
+                  onClick={handleSafeButtonClick}
+                  disabled={!isOnCoaster}
+                >
+                  SAFE
+                </button>
+              </div>
 
               {spillPos.radius > 0 && (
                 <div 
@@ -393,9 +586,11 @@ export default function App() {
                 />
               )}
 
+              {/* Draggable Coffee Mug Container */}
               <div 
                 className="pixel-coffee-mug-container" 
                 style={{ left: mugPos.x, top: mugPos.y }}
+                onPointerDown={handleMugPointerDown}
               >
                 <img src={coffeeMugImg} alt="Pixel Coffee Mug" className="pixel-coffee-img" />
               </div>
@@ -427,10 +622,28 @@ export default function App() {
           {currentPhase.id === 3 && (
             <div className="pixel-monitor-wrapper">
               <img src={screenImg} alt="Pixel Monitor Frame" className="pixel-monitor-frame" />
-              <div className="pixel-monitor-display">
+              <div 
+                className="pixel-monitor-display"
+                onPointerMove={handleMonitorDisplayPointerMove}
+                onPointerUp={handleMonitorDisplayPointerUp}
+              >
+                <div className={`desktop-warning-banner ${irrelevantPopupsCount > 5 ? 'critical' : ''}`}>
+                  {irrelevantPopupsCount === 5 && "⚠️ 1 MORE POPUP AND YOUR PRODUCTIVITY BONUS HAS LEFT THE CHAT 💀"}
+                  {irrelevantPopupsCount > 5 && "⚠️ OVERLOAD! >5 POPUPS ON DESKTOP (-5 PTS PENALTY) 💀"}
+                  {irrelevantPopupsCount < 5 && `🖥️ DESKTOP STATUS: ${irrelevantPopupsCount}/5 POPUPS`}
+                </div>
+
                 {popups.map(p => (
-                  <div key={p.id} className="popup-window-pixel" style={{ left: p.x, top: p.y }}>
-                    <div className="popup-header-pixel" style={{ background: p.isPresentation ? 'var(--pixel-cyan)' : 'var(--pixel-red)' }}>
+                  <div 
+                    key={p.id} 
+                    className="popup-window-pixel" 
+                    style={{ left: p.x, top: p.y }}
+                  >
+                    <div 
+                      className="popup-header-pixel" 
+                      style={{ background: p.isPresentation ? 'var(--pixel-cyan)' : 'var(--pixel-red)' }}
+                      onPointerDown={(e) => handlePopupPointerDown(p.id, e)}
+                    >
                       <span>{p.isPresentation ? 'DECK.ppt' : 'System Error'}</span>
                       <button className="popup-close-btn-pixel" onClick={() => handlePopupClick(p.id, p.isPresentation)}>X</button>
                     </div>
@@ -443,10 +656,9 @@ export default function App() {
             </div>
           )}
 
-          {/* STAGE 4: SURVIVE THE MEETING (PIXEL-ART MEETING ROOM & CHARACTERS) */}
+          {/* STAGE 4: SURVIVE THE MEETING */}
           {currentPhase.id === 4 && (
             <div className="pixel-meeting-room" tabIndex="0">
-              {/* Meeting Room Wall, Windows & Whiteboard */}
               <div className="meeting-wall">
                 <div className="meeting-window" />
                 <div className="meeting-whiteboard" />
@@ -454,16 +666,17 @@ export default function App() {
                 <div className="meeting-window" />
               </div>
 
-              {/* Tiled Floor */}
               <div className="meeting-floor" />
-
-              {/* Conference Table */}
               <div className="pixel-conference-table" />
 
               {/* Player Woman Character */}
               <div 
                 className="woman-character-pixel" 
-                style={{ left: womanPos.x, top: womanPos.y }}
+                style={{ 
+                  left: womanPos.x, 
+                  top: womanPos.y,
+                  opacity: isFrozen ? 0.6 : 1
+                }}
               >
                 <img src={womanImg} alt="Woman Player Character" className="woman-character-img" />
               </div>
@@ -484,9 +697,8 @@ export default function App() {
                 </div>
               ))}
 
-              {/* Movement Controls Hint */}
               <div className="controls-hint-bar">
-                ⌨️ USE WASD OR ARROW KEYS TO MOVE WOMAN AWAY FROM MOB & GOSSIP!
+                ⌨️ USE WASD OR ARROW KEYS TO OUTRUN THE MOB & AVOID GOSSIP!
               </div>
             </div>
           )}
