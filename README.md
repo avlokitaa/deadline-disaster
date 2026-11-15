@@ -22,9 +22,8 @@ The goal is simple:
 
 ## 🎮 Play the Game
 
-**[▶️ Play Deadline Disaster](YOUR_DEPLOYED_WEBSITE_URL_HERE)**
+**[▶️ Play Deadline Disaster](https://deadline-disaster.vercel.app/)**
 
-> Replace the link above with your deployed website URL.
 
 ---
 
