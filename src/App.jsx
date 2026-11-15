@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Volume2, VolumeX, Pause } from 'lucide-react';
 
 // Imported pixel asset images
@@ -12,6 +12,8 @@ import clockImg from './assets/clock.png';
 import windowImg from './assets/window.png';
 
 // Gameplay Constants & Fixed Starting Positions
+const LOGICAL_WIDTH = 1100;
+const LOGICAL_HEIGHT = 680;
 const INITIAL_STATS = { stress: 0, productivity: 100, sanity: 100, score: 0 };
 const FIXED_START_MUG_POS = { x: 150, y: 340 };
 const INITIAL_WOMAN_POS = { x: 180, y: 280 };
@@ -200,6 +202,29 @@ Now get back to work.`
   }
 ];
 
+function detectMobileTouchDevice() {
+  if (typeof window === 'undefined') return false;
+  const hasTouchPoints = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+  if (!hasTouchPoints) return false;
+  const isCoarsePrimary = window.matchMedia('(pointer: coarse)').matches;
+  const isMobileUA = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+    navigator.userAgent || ''
+  );
+  return isCoarsePrimary || isMobileUA;
+}
+
+function getLogicalPoint(el, clientX, clientY) {
+  const rect = el.getBoundingClientRect();
+  const scaleX = rect.width / (el.offsetWidth || rect.width || 1);
+  const scaleY = rect.height / (el.offsetHeight || rect.height || 1);
+  return {
+    x: (clientX - rect.left) / scaleX,
+    y: (clientY - rect.top) / scaleY,
+    width: el.offsetWidth || rect.width,
+    height: el.offsetHeight || rect.height
+  };
+}
+
 function getEndGameMessage(score) {
   if (score >= 600) {
     return '"Solid run! Your manager nodded at you in the hallway. That is basically a promotion."';
@@ -214,6 +239,19 @@ function getEndGameMessage(score) {
 }
 
 export default function App() {
+  // Mobile Detection, Proportional Scaling & Fullscreen State
+  const [isMobile, setIsMobile] = useState(() => detectMobileTouchDevice());
+  const [mobileScale, setMobileScale] = useState(1);
+  const [isPortraitMobile, setIsPortraitMobile] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [activeTouchDirs, setActiveTouchDirs] = useState({
+    arrowup: false,
+    arrowdown: false,
+    arrowleft: false,
+    arrowright: false
+  });
+  const mobileStageRef = useRef(null);
+
   const [gameState, setGameState] = useState('TITLE'); // TITLE, PLAYING, GAME_OVER
   const [gameOverReason, setGameOverReason] = useState('TIME_UP'); // TIME_UP, SANITY_DEPLETED
   const [showRules, setShowRules] = useState(false);
@@ -268,11 +306,186 @@ export default function App() {
   const isFrozenRef = useRef(false);
   const [gossips, setGossips] = useState([]);
 
-  // Keyboard Movement Input Tracker
+  // Shared Movement Input Tracker (Keyboard + Touch D-Pad)
   const keysPressed = useRef({});
+  const touchDirPointersRef = useRef({
+    arrowup: new Set(),
+    arrowdown: new Set(),
+    arrowleft: new Set(),
+    arrowright: new Set()
+  });
 
   // Active Phase calculation
   const currentPhase = PHASES.find(p => timeLeft > p.endAt) || PHASES[3];
+
+  // Recalculate mobile uniform scale factor across resize / orientation / fullscreen changes
+  const recalculateMobileLayout = useCallback(() => {
+    const mobileDetected = detectMobileTouchDevice();
+    setIsMobile(mobileDetected);
+
+    if (!mobileDetected) {
+      setMobileScale(1);
+      setIsPortraitMobile(false);
+      return;
+    }
+
+    const vv = window.visualViewport;
+    const vw = vv ? vv.width : window.innerWidth;
+    const vh = vv ? vv.height : window.innerHeight;
+
+    setIsPortraitMobile(vh > vw);
+
+    const scaleX = vw / LOGICAL_WIDTH;
+    const scaleY = vh / LOGICAL_HEIGHT;
+    const uniformScale = Math.max(0.25, Math.min(scaleX, scaleY));
+    setMobileScale(uniformScale);
+  }, []);
+
+  useEffect(() => {
+    recalculateMobileLayout();
+
+    let delayedTimer1 = null;
+    let delayedTimer2 = null;
+
+    const handleViewportUpdate = () => {
+      recalculateMobileLayout();
+      const fsEl =
+        document.fullscreenElement ||
+        document.webkitFullscreenElement ||
+        document.msFullscreenElement;
+      setIsFullscreen(Boolean(fsEl));
+
+      if (delayedTimer1) clearTimeout(delayedTimer1);
+      if (delayedTimer2) clearTimeout(delayedTimer2);
+      delayedTimer1 = setTimeout(recalculateMobileLayout, 120);
+      delayedTimer2 = setTimeout(recalculateMobileLayout, 320);
+    };
+
+    window.addEventListener('resize', handleViewportUpdate);
+    window.addEventListener('orientationchange', handleViewportUpdate);
+    document.addEventListener('fullscreenchange', handleViewportUpdate);
+    document.addEventListener('webkitfullscreenchange', handleViewportUpdate);
+
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', handleViewportUpdate);
+    }
+
+    return () => {
+      if (delayedTimer1) clearTimeout(delayedTimer1);
+      if (delayedTimer2) clearTimeout(delayedTimer2);
+      window.removeEventListener('resize', handleViewportUpdate);
+      window.removeEventListener('orientationchange', handleViewportUpdate);
+      document.removeEventListener('fullscreenchange', handleViewportUpdate);
+      document.removeEventListener('webkitfullscreenchange', handleViewportUpdate);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener('resize', handleViewportUpdate);
+      }
+    };
+  }, [recalculateMobileLayout]);
+
+  // Explicit Mobile Fullscreen + Landscape Orientation Request
+  const handleToggleFullscreen = async () => {
+    const fsEl =
+      document.fullscreenElement ||
+      document.webkitFullscreenElement ||
+      document.msFullscreenElement;
+
+    try {
+      if (!fsEl) {
+        const target = mobileStageRef.current || document.documentElement;
+        if (target.requestFullscreen) {
+          await target.requestFullscreen();
+        } else if (target.webkitRequestFullscreen) {
+          await target.webkitRequestFullscreen();
+        } else if (target.msRequestFullscreen) {
+          await target.msRequestFullscreen();
+        }
+
+        if (window.screen?.orientation?.lock) {
+          try {
+            await window.screen.orientation.lock('landscape');
+          } catch {
+            // Browser/OS does not permit orientation lock; physical rotation still works
+          }
+        }
+      } else {
+        if (document.exitFullscreen) {
+          await document.exitFullscreen();
+        } else if (document.webkitExitFullscreen) {
+          await document.webkitExitFullscreen();
+        }
+      }
+    } catch {
+      // Fallback gracefully if fullscreen is blocked/unavailable
+    }
+
+    recalculateMobileLayout();
+    setTimeout(recalculateMobileLayout, 150);
+    setTimeout(recalculateMobileLayout, 350);
+  };
+
+  // Clear all touch directional states cleanly
+  const clearAllTouchDirections = useCallback(() => {
+    const dirs = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright'];
+    dirs.forEach(dir => {
+      touchDirPointersRef.current[dir].clear();
+      keysPressed.current[dir] = false;
+    });
+    setActiveTouchDirs({
+      arrowup: false,
+      arrowdown: false,
+      arrowleft: false,
+      arrowright: false
+    });
+  }, []);
+
+  // Touch D-Pad Press-and-Hold Handlers feeding into existing keysPressed input system
+  const handleDpadPointerDown = (dir, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (e.currentTarget.setPointerCapture && e.pointerId !== undefined) {
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        // Ignore if pointer capture is unavailable
+      }
+    }
+
+    const pointerKey = e.pointerId !== undefined ? e.pointerId : 'touch';
+    touchDirPointersRef.current[dir].add(pointerKey);
+    keysPressed.current[dir] = true;
+    setActiveTouchDirs(prev => (prev[dir] ? prev : { ...prev, [dir]: true }));
+  };
+
+  const handleDpadPointerRelease = (dir, e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    const pointerKey = e && e.pointerId !== undefined ? e.pointerId : 'touch';
+    touchDirPointersRef.current[dir].delete(pointerKey);
+    if (e === null) {
+      touchDirPointersRef.current[dir].clear();
+    }
+
+    const stillHeld = touchDirPointersRef.current[dir].size > 0;
+    keysPressed.current[dir] = stillHeld;
+    setActiveTouchDirs(prev => (prev[dir] === stillHeld ? prev : { ...prev, [dir]: stillHeld }));
+  };
+
+  // Clear touch inputs if window loses focus or Stage 4 / calming changes
+  useEffect(() => {
+    window.addEventListener('blur', clearAllTouchDirections);
+    return () => window.removeEventListener('blur', clearAllTouchDirections);
+  }, [clearAllTouchDirections]);
+
+  useEffect(() => {
+    if (gameState !== 'PLAYING' || currentPhase.id !== 4 || isCalming) {
+      clearAllTouchDirections();
+    }
+  }, [gameState, currentPhase.id, isCalming, clearAllTouchDirections]);
 
   // Independent Stats Updater
   const updateStats = (delta) => {
@@ -330,7 +543,6 @@ export default function App() {
   const finishCalming = () => {
     setIsCalming(false);
     setCalmProgress(0);
-    // Bring Stress back under the 60% panic threshold without restoring Sanity
     setStats(prev => ({
       ...prev,
       stress: Math.min(50, Math.max(0, prev.stress - 25))
@@ -396,7 +608,7 @@ export default function App() {
     resetCoffeeRound();
   };
 
-  // Stage 1 Drag Interaction: Pointer Down directly on Mug
+  // Stage 1 Drag Interaction: Pointer Down directly on Mug (works identically on Desktop & Scaled Mobile)
   const handleMugPointerDown = (e) => {
     if (gameState !== 'PLAYING' || currentPhase.id !== 1 || isCalming) return;
     e.stopPropagation();
@@ -405,13 +617,10 @@ export default function App() {
     isDraggingMug.current = true;
 
     if (gameAreaRef.current) {
-      const rect = gameAreaRef.current.getBoundingClientRect();
-      const pointerX = e.clientX - rect.left;
-      const pointerY = e.clientY - rect.top;
-
+      const pt = getLogicalPoint(gameAreaRef.current, e.clientX, e.clientY);
       dragOffset.current = {
-        x: pointerX - mugPos.x,
-        y: pointerY - mugPos.y
+        x: pt.x - mugPos.x,
+        y: pt.y - mugPos.y
       };
     }
   };
@@ -421,15 +630,12 @@ export default function App() {
     const handleWindowPointerMove = (e) => {
       if (!isDraggingMug.current || !gameAreaRef.current) return;
 
-      const rect = gameAreaRef.current.getBoundingClientRect();
-      const pointerX = e.clientX - rect.left;
-      const pointerY = e.clientY - rect.top;
+      const pt = getLogicalPoint(gameAreaRef.current, e.clientX, e.clientY);
+      const newX = pt.x - dragOffset.current.x;
+      const newY = pt.y - dragOffset.current.y;
 
-      const newX = pointerX - dragOffset.current.x;
-      const newY = pointerY - dragOffset.current.y;
-
-      const clampedX = Math.max(30, Math.min(rect.width - 30, newX));
-      const clampedY = Math.max(30, Math.min(rect.height - 30, newY));
+      const clampedX = Math.max(30, Math.min(pt.width - 30, newX));
+      const clampedY = Math.max(30, Math.min(pt.height - 30, newY));
 
       setMugPos({ x: clampedX, y: clampedY });
     };
@@ -474,7 +680,7 @@ export default function App() {
     return () => clearInterval(timer);
   }, [gameState, isCalming]);
 
-  // Stage 1: Coaster & Laptop Danger Zone Detection (with discrete entry stress escalation)
+  // Stage 1: Coaster & Laptop Danger Zone Detection (uses unscaled logical container dimensions)
   useEffect(() => {
     if (gameState !== 'PLAYING' || currentPhase.id !== 1) {
       if (coffeeTimer !== null) setCoffeeTimer(null);
@@ -483,12 +689,13 @@ export default function App() {
     }
 
     if (gameAreaRef.current) {
-      const rect = gameAreaRef.current.getBoundingClientRect();
-      const laptopX = rect.width / 2;
+      const logicalWidth =
+        gameAreaRef.current.offsetWidth || gameAreaRef.current.getBoundingClientRect().width;
+      const laptopX = logicalWidth / 2;
       const laptopY = 225;
       const distToLaptop = Math.hypot(mugPos.x - laptopX, mugPos.y - laptopY);
 
-      const coasterX = rect.width - 170;
+      const coasterX = logicalWidth - 170;
       const coasterY = 225;
       const distToCoaster = Math.hypot(mugPos.x - coasterX, mugPos.y - coasterY);
 
@@ -591,19 +798,24 @@ export default function App() {
     }
   }, [irrelevantPopupsCount, currentPhase, gameState]);
 
-  // Stage 3 Draggable Popups Pointer Logic
+  // Stage 3 Draggable Popups Pointer Logic (scale-aware logical coordinates)
   const handlePopupPointerDown = (id, e) => {
     if (isCalming) return;
     if (e.button !== undefined && e.button !== 0) return;
     e.stopPropagation();
     const popupEl = e.currentTarget;
-    if (!popupEl) return;
-    const rect = popupEl.getBoundingClientRect();
+    if (!popupEl || !monitorDisplayRef.current) return;
+
+    const pt = getLogicalPoint(monitorDisplayRef.current, e.clientX, e.clientY);
+    const targetPopup = popups.find(p => p.id === id);
+    if (!targetPopup) return;
+
     activeDragRef.current = {
       id,
-      offsetX: e.clientX - rect.left,
-      offsetY: e.clientY - rect.top
+      offsetX: pt.x - targetPopup.x,
+      offsetY: pt.y - targetPopup.y
     };
+
     setPopups(prev => {
       const target = prev.find(p => p.id === id);
       if (!target) return prev;
@@ -616,9 +828,9 @@ export default function App() {
       const dragData = activeDragRef.current;
       if (!dragData || !monitorDisplayRef.current) return;
 
-      const displayRect = monitorDisplayRef.current.getBoundingClientRect();
-      let newX = e.clientX - displayRect.left - dragData.offsetX;
-      let newY = e.clientY - displayRect.top - dragData.offsetY;
+      const pt = getLogicalPoint(monitorDisplayRef.current, e.clientX, e.clientY);
+      let newX = pt.x - dragData.offsetX;
+      let newY = pt.y - dragData.offsetY;
 
       if (!Number.isFinite(newX) || !Number.isFinite(newY)) return;
 
@@ -809,6 +1021,7 @@ export default function App() {
     isFrozenRef.current = false;
     setGossips([]);
     keysPressed.current = {};
+    clearAllTouchDirections();
   };
 
   const startGame = () => {
@@ -829,8 +1042,11 @@ export default function App() {
     setShowRules(true);
   };
 
-  return (
-    <div className="game-container">
+  const gameShell = (
+    <div
+      className={`game-container ${isMobile ? 'mobile-scaled' : ''}`}
+      style={isMobile ? { transform: `scale(${mobileScale})` } : undefined}
+    >
       {/* TITLE / HOME OVERLAY */}
       {gameState === 'TITLE' && (
         <div className="overlay-pixel">
@@ -846,6 +1062,11 @@ export default function App() {
           <div className="home-btn-row">
             <button className="pixel-play-btn" onClick={startGame}>▶ PLAY GAME</button>
             <button className="pixel-secondary-btn" onClick={openRules}>📖 HOW TO PLAY</button>
+            {isMobile && (
+              <button className="pixel-secondary-btn" onClick={handleToggleFullscreen}>
+                {isFullscreen ? '⛶ EXIT FULLSCREEN' : '⛶ FULLSCREEN'}
+              </button>
+            )}
           </div>
           
           <div className="grid-cards-pixel">
@@ -931,6 +1152,11 @@ export default function App() {
               <span>SCORE</span>
               <strong>{stats.score}</strong>
             </div>
+            {isMobile && (
+              <button className="pixel-hud-fullscreen-btn" onClick={handleToggleFullscreen}>
+                {isFullscreen ? '⛶ EXIT' : '⛶ FULLSCREEN'}
+              </button>
+            )}
             <button className="pixel-btn-icon" onClick={() => setMuted(!muted)}>
               {muted ? <VolumeX size={18} /> : <Volume2 size={18} />}
             </button>
@@ -1147,8 +1373,66 @@ export default function App() {
                 </div>
               ))}
 
-              <div className="controls-hint-bar">
-                ⌨️ USE WASD OR ARROW KEYS TO OUTRUN THE MOB & AVOID GOSSIP!
+              {/* On-Screen Touch Directional Controls (Mobile/Touch Only) */}
+              {isMobile && (
+                <div
+                  className="mobile-dpad-container"
+                  onContextMenu={(e) => e.preventDefault()}
+                >
+                  <button
+                    type="button"
+                    aria-label="Move Up"
+                    className={`mobile-dpad-btn mobile-dpad-up ${activeTouchDirs.arrowup ? 'active' : ''}`}
+                    onPointerDown={(e) => handleDpadPointerDown('arrowup', e)}
+                    onPointerUp={(e) => handleDpadPointerRelease('arrowup', e)}
+                    onPointerCancel={(e) => handleDpadPointerRelease('arrowup', e)}
+                    onLostPointerCapture={() => handleDpadPointerRelease('arrowup', null)}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Move Left"
+                    className={`mobile-dpad-btn mobile-dpad-left ${activeTouchDirs.arrowleft ? 'active' : ''}`}
+                    onPointerDown={(e) => handleDpadPointerDown('arrowleft', e)}
+                    onPointerUp={(e) => handleDpadPointerRelease('arrowleft', e)}
+                    onPointerCancel={(e) => handleDpadPointerRelease('arrowleft', e)}
+                    onLostPointerCapture={() => handleDpadPointerRelease('arrowleft', null)}
+                  >
+                    ←
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Move Down"
+                    className={`mobile-dpad-btn mobile-dpad-down ${activeTouchDirs.arrowdown ? 'active' : ''}`}
+                    onPointerDown={(e) => handleDpadPointerDown('arrowdown', e)}
+                    onPointerUp={(e) => handleDpadPointerRelease('arrowdown', e)}
+                    onPointerCancel={(e) => handleDpadPointerRelease('arrowdown', e)}
+                    onLostPointerCapture={() => handleDpadPointerRelease('arrowdown', null)}
+                  >
+                    ↓
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Move Right"
+                    className={`mobile-dpad-btn mobile-dpad-right ${activeTouchDirs.arrowright ? 'active' : ''}`}
+                    onPointerDown={(e) => handleDpadPointerDown('arrowright', e)}
+                    onPointerUp={(e) => handleDpadPointerRelease('arrowright', e)}
+                    onPointerCancel={(e) => handleDpadPointerRelease('arrowright', e)}
+                    onLostPointerCapture={() => handleDpadPointerRelease('arrowright', null)}
+                  >
+                    →
+                  </button>
+                </div>
+              )}
+
+              <div
+                className="controls-hint-bar"
+                style={isMobile ? { left: '38%' } : undefined}
+              >
+                {isMobile
+                  ? '🕹️ HOLD DIRECTIONAL PAD TO OUTRUN THE MOB & AVOID GOSSIP!'
+                  : '⌨️ USE WASD OR ARROW KEYS TO OUTRUN THE MOB & AVOID GOSSIP!'}
               </div>
             </div>
           )}
@@ -1191,4 +1475,19 @@ export default function App() {
       )}
     </div>
   );
+
+  if (isMobile) {
+    return (
+      <div className="mobile-viewport-stage" ref={mobileStageRef}>
+        {isPortraitMobile && (
+          <div className="mobile-landscape-banner">
+            📱 ROTATE PHONE TO LANDSCAPE OR TAP FULLSCREEN
+          </div>
+        )}
+        {gameShell}
+      </div>
+    );
+  }
+
+  return gameShell;
 }
